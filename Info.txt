@@ -1,0 +1,162 @@
+com.company.shop
+│
+├── shared
+│   └── domain
+│       ├── AggregateRoot
+│       ├── DomainEvent
+│       └── Identifier
+│
+├── order
+│   ├── domain
+│   │   ├── aggregate
+│   │   │   └── Order
+│   │   │   └── OrderItem
+│   │   │
+│   │   ├── entity
+│   │   │   └── (optionnel futur: CustomerSnapshot, etc.)
+│   │   │
+│   │   ├── valueobject
+│   │   │   ├── OrderId
+│   │   │   ├── ProductId
+│   │   │   ├── Money
+│   │   │   └── OrderStatus
+│   │   │
+│   │   ├── event
+│   │   │   ├── OrderCreatedEvent
+│   │   │   ├── OrderConfirmedEvent
+│   │   │   └── OrderCancelledEvent
+│   │   │
+│   │   ├── exception
+│   │   │   └── (OrderBusinessException etc.)
+│   │   │
+│   │   ├── repository
+│   │   │   └── OrderRepository (PORT DOMAIN)
+│   │   │
+│   │   └── service
+│   │       └── (domain services si nécessaire)
+│   │
+│   ├── application
+│   │   ├── command
+│   │   ├── result
+│   │   ├── port
+│   │   │   ├── in
+│   │   │   └── out
+│   │   │       ├── PaymentPort
+│   │   │       └── EventPublisherPort
+│   │   │
+│   │   └── service
+│   │
+│   ├── adapter
+│   │   ├── in
+│   │   │   └── rest
+│   │   └── out
+│   │       ├── persistence
+│   │       ├── payment
+│   │       └── messaging
+│   │
+│   └── infrastructure
+│       ├── config
+│       ├── exception
+│       ├── security
+│       └── documentation
+
+⏱️ WORKFLOW DE DÉVELOPPEMENT (Architecture Hexagonale)
+
+RÈGLE D'OR : Les dépendances pointent TOUJOURS vers le centre
+        ◀───────────────────────────────────────────────────────────
+
+[ ÉTAPE 4 ]       [ ÉTAPE 3 ]          [ ÉTAPE 2 ]           [ ÉTAPE 1 ]
+  INFRA             ADAPTERS           APPLICATION             DOMAINE
+ (Spring)         (REST / JPA)         (Use Cases)          (Cœur Métier)
+
+  =======           =======              =======               =======
+     │                 │                    │                     │
+     │                 │                    │                     ├─> 1. Value Objects
+     │                 │                    │                     ├─> 2. Events & Exceptions
+     │                 │                    │                     ├─> 3. Aggregate (Order)
+     │                 │                    │                     └─> 4. Port OUT (Interfaces)
+     │                 │                    │
+     │                 │                    ├─> 5. Commands (DTOs)
+     │                 │                    ├─> 6. Port IN (Interface)
+     │                 │                    └─> 7. Application Service
+     │                 │
+     │                 ├─> 8. Adapter IN (REST Controller)
+     │                 ├─> 9. Adapter OUT (Entity JPA, Mapper)
+     │                 └─> 10. Implémentation de la BDD (Repository)
+     │
+     ├─> 11. @Configuration (Injection des Beans)
+     └─> 12. @RestControllerAdvice & @Transactional
+
+        ───────────────────────────────────────────────────────────▶
+        SENS DU CODE (On code d'abord le centre, puis on s'éloigne)
+
+
+
+📦 MATRICE DES DÉPENDANCES (Qui importe quoi ?)
+La règle absolue : L'extérieur dépend de l'intérieur. Jamais l'inverse.
+
+[4. INFRASTRUCTURE]
+com.company.shop.order.infrastructure
+ ├── Peut importer : TOUS LES PACKAGES EN DESSOUS
+ │    ├─> adapter.* (Pour brancher les Beans Spring)
+ │    ├─> application.* (Pour instancier le Use Case)
+ │    └─> domain.* (Pour la configuration globale si besoin)
+ └── Interdiction : Aucune, c'est la couche d'assemblage suprême.
+
+        │
+        ▼ (Injection de dépendances)
+
+[3. ADAPTERS]
+com.company.shop.order.adapter
+ ├── adapter.in.rest
+ │    ├─> Peut importer : application.port.in (ManageOrderUseCase)
+ │    ├─> Peut importer : application.command (DTOs)
+ │    └─> Interdiction : De parler directement au Domaine.
+ │
+ ├── adapter.out.persistence
+ │    ├─> Peut importer : domain.repository (Pour implémenter le Port)
+ │    ├─> Peut importer : domain.aggregate & domain.valueobject (Pour le Mapping)
+ │    └─> Interdiction : De parler à application.* ou aux autres adapters.
+ │
+ └── adapter.out.* (messaging, payment)
+      ├─> Peut importer : application.port.out (Pour implémenter les Ports)
+      └─> Peut importer : domain.event & domain.valueobject
+
+        │
+        ▼ (Contrats et Orchestration)
+
+[2. APPLICATION]
+com.company.shop.order.application
+ ├── Peut importer : UNIQUEMENT LE DOMAINE
+ │    ├─> domain.aggregate (Pour appeler order.confirm())
+ │    ├─> domain.repository (Pour charger l'Order)
+ │    └─> domain.valueobject (Pour manipuler les IDs et les montants)
+ └── Interdiction : D'importer des adapters ou de l'infrastructure. Zéro Spring ici.
+
+        │
+        ▼ (Cœur Métier Pur)
+
+[1. DOMAIN]
+com.company.shop.order.domain
+ ├── Peut importer : SHARED KERNEL
+ │    └─> shared.domain (AggregateRoot, DomainEvent)
+ └── ❌ INTERDICTION ABSOLUE :
+      Il ne doit JAMAIS y avoir un import commençant par :
+      - com.company.shop.order.application.*
+      - com.company.shop.order.adapter.*
+      - org.springframework.*
+      - jakarta.persistence.*
+
+            Application
+                 │
+                 ▼
+         OrderRepository (Port)
+                 ▲
+                 │
+     JpaOrderRepository (Adapter)
+                 │
+                 ▼
+            Spring Data JPA
+                 │
+                 ▼
+             Database
